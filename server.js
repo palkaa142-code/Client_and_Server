@@ -23,42 +23,43 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
  * POST /api/leaderboard
  * Appends a new score and full name to the leaderboard
  */
-app.post('/api/leaderboard', async (req, res) => {
-  const { full_name, score } = req.body;
 
-  // Simple validation
-  if (!full_name || score === undefined) {
-    return res.status(400).json({ error: 'Missing full_name or score in request body' });
+app.post('/api/upload-csv', async (req, res) => {
+  const records = req.body;
+
+  if (!Array.isArray(records) || records.length === 0) {
+    return res.status(400).json({
+      error: 'Expected a non-empty array'
+    });
   }
 
   try {
-    // Directly insert/append the data into the 'leaderboard' table
+    const participants = records.map(record => ({
+      team_name: record.team_name
+    }));
+
     const { data, error } = await supabase
-      .from('leaderboard')
-      .insert([
-        { 
-          full_name: full_name, 
-          score: parseInt(score, 10) 
-        }
-      ])
-      .select(); // Returns the inserted row
+      .from('participants')
+      .insert(participants)
+      .select();
 
     if (error) {
       throw error;
     }
 
     return res.status(201).json({
-      message: 'Leaderboard updated successfully!',
-      entry: data[0]
+      message: 'Participants uploaded successfully!',
+      count: data.length
     });
 
   } catch (error) {
-    return res.status(500).json({ 
-      error: 'Failed to insert leaderboard data', 
-      details: error.message 
+    return res.status(500).json({
+      error: 'Failed to insert participants',
+      details: error.message
     });
   }
 });
+
 
 // Start the server
 const PORT = process.env.PORT || 3000;

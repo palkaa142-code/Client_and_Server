@@ -1,56 +1,50 @@
-import csv
-import httpx
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+import pandas as pd
+import requests
 
-app = FastAPI(title="Leaderboard CSV Uploader")
+def upload_csv_to_server(file_path, batch_size=1000):
+    url = 'http://localhost:3000/api/upload-csv'
+   
+    # Read the CSV file using pandas
+    try:
+        df = pd.read_csv(file_path)
+    except Exception as e:
+        print(f"Error reading CSV file: {e}")
+        return
 
-# URL of your Node.js/Express server
-EXPRESS_SERVER_URL = "http://localhost:3000/api/leaderboard"
+    # 1. Map the CSV column 'Full Name' to the Supabase column 'team_name'
+    if 'Full Name' in df.columns:
+        df = df.rename(columns={'Full Name': 'team_name'})
+    else:
+        print("Error: 'Full Name' column not found in the CSV!")
+        return
 
+    # 2. Drop the 'score' column if it exists in the CSV so it uses your database default
+    if 'score' in df.columns:
+        df = df.drop(columns=['score'])
 
-class UploadResponse(BaseModel):
-  message: str
-  results: list[dict]
+    # Keep only the columns you actually want to send
+    df = df[['team_name']]
 
+    # Clean data (handle NaN values by replacing with None for SQL NULL)
+    df = df.where(pd.notnull(df), None)
+   
+    records = df.to_dict(orient='records')
+    print("CSV columns:", df.columns.tolist())
+    print("Records:", records[:5])
+   
+    # Send data in batches to prevent payload size issues
+    for i in range(0, len(records), batch_size):
+        batch = records[i:i + batch_size]
+       
+        try:
+            response = requests.post(url, json=batch)
+            if response.status_code in (200, 201):
+                print(f"Successfully uploaded batch {i // batch_size + 1}: {response.json().get('message')}")
+            else:
+                print(f"Failed batch {i // batch_size + 1}: {response.status_code} - {response.text}")
+        except requests.exceptions.RequestException as e:
+            print(f"Connection error: {e}")
+            break
 
-@app.post("/upload-csv", response_model=UploadResponse)
-async def upload_leaderboard_from_csv(file_path: str = "leaderboard.csv"):
-  """Reads a CSV file containing `full_name` and `score` columns and posts them to the Express server."""
-  uploaded_entries = []
-
-  try:
-    with open(file_path, mode="r", encoding="utf-8") as csv_file:
-      reader = csv.DictReader(csv_file)
-
-      async with httpx.AsyncClient() as client:
-        for row in reader:
-          full_name = row.get("full_name")
-          score = row.get("score")
-
-          if not full_name or score is None:
-            continue
-
-          payload = {"full_name": full_name, "score": int(score)}
-
-          response = await client.post(EXPRESS_SERVER_URL, json=payload)
-
-          if response.status_code == 201:
-            uploaded_entries.append(response.json().get("entry"))
-          else:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Express server error: {response.text}",
-            )
-
-  except FileNotFoundError:
-    raise HTTPException(
-        status_code=404, detail=f"CSV file '{file_path}' not found."
-    )
-  except Exception as e:
-    raise HTTPException(status_code=500, detail=str(e))
-
-  return {
-      "message": "CSV data processed and sent to Express server successfully!",
-      "results": uploaded_entries,
-  }
+if __name__ == '__main__':
+    upload_csv_to_server('full_names.csv')
